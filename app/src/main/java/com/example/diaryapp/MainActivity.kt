@@ -1,25 +1,28 @@
 package com.example.diaryapp
 
-import android.os.Build
+import android.content.ContentResolver
+import android.content.Intent
 import android.os.Bundle
 import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.annotation.RequiresApi
+import androidx.compose.ui.platform.LocalContext
+import androidx.core.net.toUri
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.core.view.WindowCompat
 import androidx.lifecycle.lifecycleScope
 import androidx.navigation.compose.rememberNavController
-import com.example.diaryapp.data.database.ImagesToDeleteDao
-import com.example.diaryapp.data.database.ImagesToUploadDao
-import com.example.diaryapp.data.repository.MongoDB
-import com.example.diaryapp.navigation.Screen
 import com.example.diaryapp.navigation.SetupNavGraph
-import com.example.diaryapp.ui.theme.DiaryAppTheme
-import com.example.diaryapp.util.Constants.APP_ID
-import com.example.diaryapp.util.retryDeletingImageFromFirebase
-import com.example.diaryapp.util.retryUploadingImageToFirebase
+import com.example.ui.theme.DiaryAppTheme
+import com.example.mongo.database.ImagesToDeleteDao
+import com.example.mongo.database.ImagesToUploadDao
+import com.example.mongo.database.entity.ImageToDelete
+import com.example.mongo.database.entity.ImageToUpload
+import com.example.util.Constants.APP_ID
+import com.example.util.Screen
 import com.google.firebase.FirebaseApp
+import com.google.firebase.storage.FirebaseStorage
+import com.google.firebase.storage.ktx.storageMetadata
 import dagger.hilt.android.AndroidEntryPoint
 import io.realm.kotlin.mongodb.App
 import kotlinx.coroutines.CoroutineScope
@@ -27,7 +30,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
-@RequiresApi(Build.VERSION_CODES.N)
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
 
@@ -57,13 +59,20 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-        /*cleanupCheck(
+        cleanupCheck(
             scope = lifecycleScope,
             imagesToUploadDao = imagesToUploadDao,
             imagesToDeleteDao = imagesToDeleteDao
-        )*/
+        )
     }
 }
+
+private fun getStartDestination(): String {
+    val user = App.create(APP_ID).currentUser
+    return if (user != null && user.loggedIn) Screen.Home.route
+    else Screen.Authentication.route
+}
+
 private fun cleanupCheck(
     scope: CoroutineScope,
     imagesToUploadDao: ImagesToUploadDao,
@@ -71,7 +80,6 @@ private fun cleanupCheck(
 ) {
     scope.launch(Dispatchers.IO) {
         val result = imagesToUploadDao.getAllImages()
-        Log.d("cleanupCheck", "cleanupCheck: $result")
         result.forEach { imageToUpload ->
             retryUploadingImageToFirebase(
                 imageToUpload = imageToUpload,
@@ -96,8 +104,23 @@ private fun cleanupCheck(
     }
 }
 
-private fun getStartDestination(): String {
-    val user = App.create(APP_ID).currentUser
-    return if (user != null && user.loggedIn) Screen.Home.route
-    else Screen.Authentication.route
+fun retryUploadingImageToFirebase(
+    imageToUpload: ImageToUpload,
+    onSuccess: () -> Unit
+) {
+    val storage = FirebaseStorage.getInstance().reference
+    storage.child(imageToUpload.remoteImagePath).putFile(
+        imageToUpload.imageUri.toUri(),
+        storageMetadata { },
+        imageToUpload.sessionUri.toUri()
+    ).addOnSuccessListener { onSuccess() }
+}
+
+fun retryDeletingImageFromFirebase(
+    imageToDelete: ImageToDelete,
+    onSuccess: () -> Unit
+) {
+    val storage = FirebaseStorage.getInstance().reference
+    storage.child(imageToDelete.remoteImagePath).delete()
+        .addOnSuccessListener { onSuccess() }
 }
